@@ -480,7 +480,7 @@ const DashboardLayout = {
 
         return {
             nombreUsuario, rolActual, darkMode, toggleDarkMode,
-            cerrarSesion, currentTab, irA
+            cerrarSesion, sidebarVisible, windowWidth, currentTab, irA
         };
     }
 };
