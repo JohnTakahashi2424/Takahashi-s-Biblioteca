@@ -1,0 +1,2023 @@
+=== RECOPILACIÓN DE CÓDIGO DEL AGENTE IA ===
+
+
+======================================================
+ARCHIVO: biblioteca_schema.sql
+======================================================
+
+-- ==========================================================
+-- SCRIPT DE BASE DE DATOS: BIBLIOTECA DIGITAL (Estilo E-Libro)
+-- ==========================================================
+
+-- Crear la base de datos si no existe
+CREATE DATABASE IF NOT EXISTS biblioteca_elibro CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE biblioteca_elibro;
+
+-- 1. TABLA: categorias
+CREATE TABLE IF NOT EXISTS categorias (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL UNIQUE,
+    descripcion TEXT,
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. TABLA: usuarios (Administradores y Lectores)
+CREATE TABLE IF NOT EXISTS usuarios (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(150) NOT NULL,
+    email VARCHAR(150) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL, -- Guardará el HASH (password_hash)
+    rol ENUM('admin', 'lector') NOT NULL DEFAULT 'lector',
+    perfil_completado BOOLEAN NOT NULL DEFAULT FALSE, -- Ideal para forzar cambiar la clave
+    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. TABLA: libros
+CREATE TABLE IF NOT EXISTS libros (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    titulo VARCHAR(255) NOT NULL,
+    autor VARCHAR(150) NOT NULL,
+    categoria_id INT,
+    isbn VARCHAR(20) UNIQUE,
+    stock_total INT NOT NULL DEFAULT 1,
+    stock_disponible INT NOT NULL DEFAULT 1,
+    portada_url VARCHAR(255),
+    fecha_agregado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_libro_categoria FOREIGN KEY (categoria_id) 
+        REFERENCES categorias(id) ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+-- 4. TABLA: prestamos (Relaciona usuarios con libros)
+CREATE TABLE IF NOT EXISTS prestamos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    usuario_id INT NOT NULL,
+    libro_id INT NOT NULL,
+    fecha_inicio DATE NOT NULL,
+    fecha_vencimiento DATE NOT NULL,
+    estado ENUM('activo', 'devuelto', 'vencido') NOT NULL DEFAULT 'activo',
+    anotaciones TEXT, -- Para las herramientas de estudio estilo E-Libro
+    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Restricciones de Llave Foránea (Integridad Referencial)
+    CONSTRAINT fk_prestamo_usuario FOREIGN KEY (usuario_id) 
+        REFERENCES usuarios(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_prestamo_libro FOREIGN KEY (libro_id) 
+        REFERENCES libros(id) ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+-- ==========================================================
+-- DATOS DE PRUEBA (Opcional)
+-- ==========================================================
+INSERT INTO categorias (nombre, descripcion) VALUES 
+('Ingeniería', 'Libros técnicos y ciencias exactas'),
+('Novela', 'Ficción y literatura');
+
+-- El password de este admin es 'admin123' (hash generado con bcrypt)
+INSERT INTO usuarios (nombre, email, password, rol, perfil_completado) VALUES 
+('Super Admin', 'admin@elibro.com', '$2y$10$eE..N7vjH1cO/2OQq/U0f.N.h/7K/3H/I/U5yq1/x8o7I3/d.aD.e', 'admin', TRUE);
+
+
+
+======================================================
+ARCHIVO: index.html
+======================================================
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>SISTEMA BIBLIOTECARIO — Gestión Pro</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <!-- AlertifyJS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/alertifyjs@1.13.1/build/css/alertify.min.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/alertifyjs@1.13.1/build/css/themes/bootstrap.min.css"/>
+    <style>
+        [v-cloak] { display: none; }
+        .sidebar { transition: width 0.3s ease; }
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        .bg-pattern-books {
+            background-color: var(--bs-body-bg);
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='rgba(255, 255, 255, 0.02)' viewBox='0 0 16 16'%3E%3Cpath d='M8.5 2.687c.654-.689 1.782-.886 3.112-.752 1.234.124 2.503.523 3.388.893v9.923c-.918-.35-2.107-.692-3.287-.81-1.094-.111-2.278-.039-3.213.492zM8 1.783C7.015.936 5.587.81 4.287.94c-1.514.153-3.042.672-3.994 1.105A.5.5 0 0 0 0 2.5v11a.5.5 0 0 0 .707.455c.882-.4 2.303-.881 3.68-1.02 1.409-.142 2.59.087 3.223.877a.5.5 0 0 0 .78 0c.633-.79 1.814-1.019 3.222-.877 1.378.139 2.8.62 3.681 1.02A.5.5 0 0 0 16 13.5v-11a.5.5 0 0 0-.293-.455c-.952-.433-2.48-.952-3.994-1.105C10.413.809 8.985.936 8 1.783'/%3E%3C/svg%3E");
+            background-size: 80px 80px;
+            background-repeat: repeat;
+        }
+    </style>
+</head>
+<body class="bg-body bg-pattern-books">
+
+<div id="app" v-cloak class="shadow-sm min-vh-100 d-flex flex-column">
+
+    <nav class="navbar navbar-dark bg-primary px-3 shadow flex-shrink-0 sticky-top" style="height:60px; z-index: 1030;">
+        <div class="container-fluid px-0">
+            <div class="navbar-brand d-flex align-items-center gap-2 mb-0" style="padding: 0;">
+                <button class="btn btn-sm btn-link text-white me-1 d-md-none" @click="sidebarVisible = !sidebarVisible">
+                    <i class="bi bi-list fs-4"></i>
+                </button>
+                <div class="bg-body rounded-circle d-flex align-items-center justify-content-center shadow-sm" style="width:38px; height:38px;">
+                    <i class="bi bi-book-half fs-5 text-primary"></i>
+                </div>
+                <span>
+                    <span class="fw-bold text-white" style="font-size: 1.1rem; line-height: 1.2; letter-spacing: 0.5px;">SISTEMA BIBLIOTECARIO</span>
+                    <small class="d-block text-white text-opacity-75" style="font-size: 0.7rem; letter-spacing: 1px; line-height: 1;">GESTIÓN DE LIBROS</small>
+                </span>
+            </div>
+            <div class="d-flex align-items-center gap-3 ms-auto">
+                <button class="btn btn-sm text-white border-0 opacity-75 hover-opacity-100" @click="toggleDarkMode" title="Alternar Modo Oscuro">
+                    <i :class="darkMode ? 'bi bi-sun-fill text-warning' : 'bi bi-moon-stars-fill'"></i>
+                </button>
+                <div class="vr bg-white opacity-25 d-none d-sm-block" style="height: 20px;"></div>
+                <select class="form-select form-select-sm bg-white bg-opacity-10 text-white border-0 shadow-none w-auto fw-bold" v-model="simuladorLoginId" @change="cambiarSesion">
+                    <option value="admin" class="text-dark">👑 Admin</option>
+                    <option v-for="u in usuarios" :key="u.idUsuario" :value="u.idUsuario" class="text-dark">👤 {{ u.nombre }}</option>
+                </select>
+                <span v-if="rolActual === 'admin'" class="badge bg-white bg-opacity-25 text-white border border-white border-opacity-50 d-flex align-items-center gap-1 px-2 py-1 fw-normal">
+                    <i class="bi bi-shield-check"></i> Bibliotecario
+                </span>
+                <span class="text-white small fw-semibold d-none d-sm-flex align-items-center">
+                    <i class="bi bi-person-badge-fill me-1"></i> Jonathan Guandique
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="d-flex flex-grow-1" style="background-color: var(--bs-body-bg);">
+
+        <nav class="bg-body-tertiary border-end flex-shrink-0 sidebar overflow-y-auto"
+             :style="sidebarVisible || windowWidth >= 768 ? 'width:220px;' : 'width:0;'">
+            
+            <template v-if="rolActual === 'admin'">
+                <div class="px-3 pt-3 pb-2">
+                    <p class="text-uppercase text-muted fw-semibold mb-0" style="font-size:.65rem;letter-spacing:1px;">General</p>
+                </div>
+                <ul class="nav flex-column gap-1 px-2 pb-2">
+                    <li class="nav-item">
+                        <a class="nav-link rounded d-flex align-items-center gap-2 px-3 py-2 fw-semibold"
+                           :class="currentTab === 'dashboard' ? 'active bg-primary text-white' : 'text-secondary'"
+                           href="#" @click.prevent="currentTab = 'dashboard'">
+                            <i class="bi bi-grid-1x2-fill" style="width:18px;text-align:center;"></i>
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+                </ul>
+                <div class="px-3 pt-3 pb-2 border-top mx-2">
+                    <p class="text-uppercase text-muted fw-semibold mb-0" style="font-size:.65rem;letter-spacing:1px;">Catálogos</p>
+                </div>
+                <ul class="nav flex-column gap-1 px-2 pb-3">
+                    <li class="nav-item">
+                        <a class="nav-link rounded d-flex align-items-center gap-2 px-3 py-2 fw-semibold"
+                           :class="currentTab === 'categorias' ? 'active bg-primary text-white' : 'text-secondary'"
+                           href="#" @click.prevent="currentTab = 'categorias'">
+                            <i class="bi bi-tags-fill" style="width:18px;text-align:center;"></i>
+                            <span>Categorías</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link rounded d-flex align-items-center gap-2 px-3 py-2 fw-semibold"
+                           :class="currentTab === 'usuarios' ? 'active bg-primary text-white' : 'text-secondary'"
+                           href="#" @click.prevent="currentTab = 'usuarios'">
+                            <i class="bi bi-people-fill" style="width:18px;text-align:center;"></i>
+                            <span>Registro de Lectores</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link rounded d-flex align-items-center gap-2 px-3 py-2 fw-semibold"
+                           :class="currentTab === 'autores' ? 'active bg-primary text-white' : 'text-secondary'"
+                           href="#" @click.prevent="currentTab = 'autores'">
+                            <i class="bi bi-person-lines-fill" style="width:18px;text-align:center;"></i>
+                            <span>Registro de Autores</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link rounded d-flex align-items-center gap-2 px-3 py-2 fw-semibold"
+                           :class="currentTab === 'libros' ? 'active bg-primary text-white' : 'text-secondary'"
+                           href="#" @click.prevent="currentTab = 'libros'">
+                            <i class="bi bi-bookshelf" style="width:18px;text-align:center;"></i>
+                            <span>Libros Registrados</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link rounded d-flex align-items-center gap-2 px-3 py-2 fw-semibold"
+                           :class="currentTab === 'prestamos' ? 'active bg-primary text-white' : 'text-secondary'"
+                           href="#" @click.prevent="currentTab = 'prestamos'">
+                            <i class="bi bi-calendar-check" style="width:18px;text-align:center;"></i>
+                            <span>Control de Préstamos</span>
+                        </a>
+                    </li>
+                </ul>
+            </template>
+
+            <template v-if="rolActual === 'lector'">
+                <div class="px-3 pt-3 pb-2">
+                    <p class="text-uppercase text-muted fw-semibold mb-0" style="font-size:.65rem;letter-spacing:1px;">Mi eLibro</p>
+                </div>
+                <ul class="nav flex-column gap-1 px-2 pb-2">
+                    <li class="nav-item">
+                        <a class="nav-link rounded d-flex align-items-center gap-2 px-3 py-2 fw-semibold"
+                           :class="currentTab === 'estante' ? 'active bg-primary text-white' : 'text-secondary'"
+                           href="#" @click.prevent="currentTab = 'estante'">
+                            <i class="bi bi-journal-bookmark-fill" style="width:18px;text-align:center;"></i>
+                            <span>Mi Estante</span>
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link rounded d-flex align-items-center gap-2 px-3 py-2 fw-semibold"
+                           :class="currentTab === 'catalogo' ? 'active bg-primary text-white' : 'text-secondary'"
+                           href="#" @click.prevent="currentTab = 'catalogo'">
+                            <i class="bi bi-search" style="width:18px;text-align:center;"></i>
+                            <span>Catálogo Público</span>
+                        </a>
+                    </li>
+                </ul>
+            </template>
+        </nav>
+
+        <main class="flex-grow-1 p-4 bg-body-tertiary bg-opacity-50" style="min-width:0;">
+            <div class="container-xl mx-auto">
+                <transition name="fade" mode="out-in">
+                    <!-- Dashboard -->
+                    <div v-if="currentTab === 'dashboard'" key="dashboard">
+                        <div class="d-flex align-items-center justify-content-between mb-4">
+                            <h4 class="mb-0 fw-bold text-primary-emphasis"><i class="bi bi-speedometer2 me-2"></i>Panel de Resumen</h4>
+                            <span class="badge bg-primary bg-opacity-10 text-primary px-3 py-2 rounded-pill fw-semibold">
+                                <i class="bi bi-calendar3 me-1"></i> {{ new Date().toLocaleDateString() }}
+                            </span>
+                        </div>
+                        
+                        <div class="row g-4 mb-4">
+                            <div class="col-12 col-md-4">
+                                <div class="card bg-primary text-white shadow-lg overflow-hidden border-0 h-100">
+                                    <div class="card-body p-4 position-relative">
+                                        <i class="bi bi-book position-absolute opacity-10" style="font-size: 5rem; right: -10px; bottom: -10px;"></i>
+                                        <h6 class="text-uppercase fw-bold opacity-75 mb-1" style="font-size: 0.7rem; letter-spacing: 1px;">Total Libros</h6>
+                                        <h2 class="display-5 fw-bold mb-0">{{ libros.length }}</h2>
+                                        <p class="small mb-0 mt-2"><i class="bi bi-arrow-up-short"></i> Obras registradas</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="card bg-info text-white shadow-lg overflow-hidden border-0 h-100">
+                                    <div class="card-body p-4 position-relative">
+                                        <i class="bi bi-people position-absolute opacity-10" style="font-size: 5rem; right: -10px; bottom: -10px;"></i>
+                                        <h6 class="text-uppercase fw-bold opacity-75 mb-1" style="font-size: 0.7rem; letter-spacing: 1px;">Autores Activos</h6>
+                                        <h2 class="display-5 fw-bold mb-0">{{ autores.length }}</h2>
+                                        <p class="small mb-0 mt-2"><i class="bi bi-globe"></i> Diversas regiones</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="card bg-success text-white shadow-lg overflow-hidden border-0 h-100">
+                                    <div class="card-body p-4 position-relative">
+                                        <i class="bi bi-calendar-check position-absolute opacity-10" style="font-size: 5rem; right: -10px; bottom: -10px;"></i>
+                                        <h6 class="text-uppercase fw-bold opacity-75 mb-1" style="font-size: 0.7rem; letter-spacing: 1px;">Préstamos Activos</h6>
+                                        <h2 class="display-5 fw-bold mb-0">{{ prestamos.filter(p => p.estado === 'Prestado').length }}</h2>
+                                        <p class="small mb-0 mt-2"><i class="bi bi-clock-history"></i> Pendientes de entrega</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-4">
+                            <div class="col-12 col-xl-7">
+                                <div class="card shadow-sm h-100">
+                                    <div class="card-header bg-body-tertiary py-3 border-0">
+                                        <h6 class="mb-0 fw-bold"><i class="bi bi-clock-history me-2 text-primary"></i>Últimos Libros Registrados</h6>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div class="table-responsive">
+                                            <table class="table table-hover align-middle mb-0">
+                                                <tbody>
+                                                    <tr v-for="libro in libros.slice(-4).reverse()" :key="libro.idLibro">
+                                                        <td class="ps-4">
+                                                            <div class="fw-bold">{{ libro.titulo }}</div>
+                                                            <small class="text-muted">{{ obtenerNombreAutor(libro.idAutor) }}</small>
+                                                        </td>
+                                                        <td class="text-end pe-4">
+                                                            <span class="badge bg-body-secondary text-body fw-normal border">ISBN: {{ libro.isbn }}</span>
+                                                        </td>
+                                                    </tr>
+                                                    <tr v-if="libros.length === 0">
+                                                        <td colspan="2" class="text-center py-4 text-muted small">No hay actividades recientes</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-xl-5">
+                                <div class="card shadow-sm h-100 overflow-hidden">
+                                    <div class="card-body p-0">
+                                        <img src="https://images.unsplash.com/photo-1507842217343-583bb7270b66?q=80&w=2000&auto=format&fit=crop" class="img-fluid w-100" style="height:150px; object-fit:cover;" alt="Library">
+                                        <div class="p-4">
+                                            <h6 class="fw-bold mb-2">Bienvenido al Gestor Bibliotecario</h6>
+                                            <p class="text-muted small mb-0">Desde aquí puedes gestionar el acervo cultural de la biblioteca de manera eficiente y moderna.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Gráfica de eLibro (Analytics) -->
+                        <div class="col-12 mt-4">
+                            <div class="card shadow-sm border-0 rounded-4 bg-body">
+                                <div class="card-header bg-transparent border-bottom-0 pt-4 pb-0 px-4">
+                                    <h6 class="fw-bold text-primary-emphasis mb-0"><i class="bi bi-bar-chart-fill me-2"></i>Títulos Más Populares (Analytics)</h6>
+                                </div>
+                                <div class="card-body p-4">
+                                    <canvas id="popularBooksChart" style="max-height: 300px; width: 100%;"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                <!-- Sección de Categorías -->
+                <div v-else-if="currentTab === 'categorias'" key="categorias">
+                    <div class="d-flex align-items-center justify-content-between mb-4">
+                        <h4 class="mb-0 fw-bold text-primary-emphasis"><i class="bi bi-tags-fill me-2"></i>Gestión de Categorías</h4>
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb mb-0">
+                                <li class="breadcrumb-item small"><a href="#" class="text-decoration-none">Catálogos</a></li>
+                                <li class="breadcrumb-item active small" aria-current="page">Categorías</li>
+                            </ol>
+                        </nav>
+                    </div>
+                    <div class="row g-4">
+                        <div class="col-12 col-xl-4">
+                            <div class="card shadow-sm border bg-body h-100">
+                                <div class="card-body p-4">
+                                    <h6 class="text-uppercase text-primary fw-bold mb-4 d-flex align-items-center" style="font-size: 0.75rem;">
+                                        <i class="bi bi-plus-circle-fill me-2"></i>{{ editModeCategoria ? 'Editar Categoría' : 'Nueva Categoría' }}
+                                    </h6>
+                                    <form @submit.prevent="guardarCategoria">
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">NOMBRE</label>
+                                            <input type="text" class="form-control" v-model="formCategoria.nombre" required>
+                                        </div>
+                                        <div class="mb-4">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">DESCRIPCIÓN</label>
+                                            <textarea class="form-control" v-model="formCategoria.descripcion" rows="3"></textarea>
+                                        </div>
+                                        <div class="d-grid gap-2">
+                                            <button type="submit" class="btn btn-primary fw-bold py-2 shadow-sm">
+                                                {{ editModeCategoria ? 'Actualizar Categoría' : 'Guardar Categoría' }}
+                                            </button>
+                                            <button type="button" class="btn btn-link text-secondary fw-semibold py-2 text-decoration-none" v-if="editModeCategoria" @click="cancelarEdicionCategoria">Cancelar</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-xl-8">
+                            <div class="card shadow-sm border-0 rounded-4 overflow-hidden bg-body h-100">
+                                <div class="card-header bg-body border-bottom py-3 px-4">
+                                    <h6 class="mb-0 fw-bold"><i class="bi bi-list-ul me-2 text-primary"></i>Lista de Categorías</h6>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover align-middle mb-0">
+                                        <thead class="bg-body-tertiary border-bottom text-muted" style="font-size: 0.7rem;">
+                                            <tr>
+                                                <th class="px-4 py-3 text-uppercase">NOMBRE</th>
+                                                <th class="px-4 py-3 text-uppercase">DESCRIPCIÓN</th>
+                                                <th class="px-4 py-3 text-center text-uppercase">GESTIÓN</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody style="font-size: 0.85rem;">
+                                            <tr v-for="cat in categorias" :key="cat.idCategoria">
+                                                <td class="px-4 py-3 fw-bold text-primary">{{ cat.nombre }}</td>
+                                                <td class="px-4 py-3 text-muted">{{ cat.descripcion }}</td>
+                                                <td class="px-4 py-3 text-center">
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button class="btn btn-outline-secondary border-0 rounded-2 me-1" @click="editarCategoria(cat)" title="Editar">
+                                                            <i class="bi bi-pencil-square fs-6"></i>
+                                                        </button>
+                                                        <button class="btn btn-outline-danger border-0 rounded-2" @click="eliminarCategoria(cat.idCategoria)" title="Eliminar">
+                                                            <i class="bi bi-trash fs-6"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="categorias.length === 0">
+                                                <td colspan="3" class="text-center py-5 text-muted">
+                                                    <i class="bi bi-tags fs-1 d-block mb-2 opacity-25"></i>
+                                                    No hay categorías registradas.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sección de Autores -->
+                <div v-else-if="currentTab === 'autores'" key="autores">
+                    <div class="d-flex align-items-center justify-content-between mb-4">
+                        <h4 class="mb-0 fw-bold text-primary-emphasis"><i class="bi bi-person-lines-fill me-2"></i>Administración de Autores</h4>
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb mb-0">
+                                <li class="breadcrumb-item small"><a href="#" class="text-decoration-none">Catálogos</a></li>
+                                <li class="breadcrumb-item active small" aria-current="page">Autores</li>
+                            </ol>
+                        </nav>
+                    </div>
+                    
+                    <div class="row g-4">
+                        <div class="col-12 col-xl-4">
+                            <div class="card shadow-sm border bg-body h-100">
+                                <div class="card-body p-4">
+                                    <h6 class="text-uppercase text-primary fw-bold mb-4 d-flex align-items-center" style="font-size: 0.75rem;">
+                                        <i class="bi bi-plus-circle-fill me-2"></i>{{ editModeAutor ? 'Editar Ficha' : 'Nueva Ficha de Autor' }}
+                                    </h6>
+                                    <form @submit.prevent="guardarAutor">
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">CÓDIGO</label>
+                                            <input type="text" class="form-control" v-model="formAutor.codigo" placeholder="Ej. A001" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">NOMBRE COMPLETO</label>
+                                            <input type="text" class="form-control" v-model="formAutor.nombre" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">PAÍS DE ORIGEN</label>
+                                            <input type="text" class="form-control" v-model="formAutor.pais" required>
+                                        </div>
+                                        <div class="mb-4">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">TELÉFONO CONTACTO</label>
+                                            <input type="tel" class="form-control" v-model="formAutor.telefono" required>
+                                        </div>
+                                        <div class="d-grid gap-2">
+                                            <button type="submit" class="btn btn-primary fw-bold py-2 shadow-sm" :disabled="isSaving">
+                                                <span v-if="isSaving" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                                {{ isSaving ? 'Guardando...' : (editModeAutor ? 'Actualizar Ficha' : 'Guardar Ficha') }}
+                                            </button>
+                                            <button type="button" class="btn btn-link text-secondary fw-semibold py-2 text-decoration-none" v-if="editModeAutor" @click="cancelarEdicionAutor">Cancelar</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-xl-8">
+                            <div class="card shadow-sm border-0 rounded-4 overflow-hidden bg-body h-100">
+                                <div class="card-header bg-body border-bottom py-3 px-4">
+                                    <div class="row align-items-center g-3">
+                                        <div class="col-md-5">
+                                            <h6 class="mb-0 fw-bold"><i class="bi bi-table me-2 text-primary"></i>Índice de Autores</h6>
+                                        </div>
+                                        <div class="col-md-7">
+                                            <div class="input-group">
+                                                <span class="input-group-text bg-body-secondary border-0 text-muted px-3"><i class="bi bi-search"></i></span>
+                                                <input type="text" class="form-control bg-body-secondary border-0 shadow-none ps-0" placeholder="Filtrar por nombre, código o país..." v-model="filtroAutor">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover align-middle mb-0">
+                                        <thead class="bg-body-tertiary border-bottom text-muted" style="font-size: 0.7rem;">
+                                            <tr>
+                                                <th class="px-4 py-3 text-uppercase">CÓDIGO</th>
+                                                <th class="px-4 py-3 text-uppercase">DATOS DEL AUTOR</th>
+                                                <th class="px-4 py-3 text-center text-uppercase">GESTIÓN</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody style="font-size: 0.85rem;">
+                                            <tr v-for="autor in autoresFiltrados" :key="autor.idAutor">
+                                                <td class="px-4 py-3 font-monospace text-primary fw-bold" style="font-size: 0.8rem;">{{ autor.codigo }}</td>
+                                                <td class="px-4 py-3">
+                                                    <div class="fw-bold text-body" style="font-size: 0.95rem;">{{ autor.nombre }}</div>
+                                                    <div class="small text-muted d-flex align-items-center gap-2">
+                                                        <span><i class="bi bi-geo-alt-fill"></i> {{ autor.pais }}</span>
+                                                        <span class="text-opacity-25 text-muted">|</span>
+                                                        <span><i class="bi bi-telephone-fill"></i> {{ autor.telefono }}</span>
+                                                    </div>
+                                                </td>
+                                                <td class="px-4 py-3 text-center">
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button class="btn btn-outline-secondary border-0 rounded-2 me-1" @click="editarAutor(autor)" title="Editar">
+                                                            <i class="bi bi-pencil-square fs-6"></i>
+                                                        </button>
+                                                        <button class="btn btn-outline-danger border-0 rounded-2" @click="eliminarAutor(autor.idAutor)" title="Eliminar">
+                                                            <i class="bi bi-trash fs-6"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="autoresFiltrados.length === 0">
+                                                <td colspan="3" class="text-center py-5 text-muted">
+                                                    <i class="bi bi-inbox fs-1 d-block mb-2 opacity-25"></i>
+                                                    No se encontraron registros de autores.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sección de Lectores (Usuarios) -->
+                <div v-else-if="currentTab === 'usuarios'" key="usuarios">
+                    <div class="d-flex align-items-center justify-content-between mb-4">
+                        <h4 class="mb-0 fw-bold text-primary-emphasis"><i class="bi bi-people-fill me-2"></i>Gestión de Lectores</h4>
+                        <nav aria-label="breadcrumb">
+                            <ol class="breadcrumb mb-0">
+                                <li class="breadcrumb-item small"><a href="#" class="text-decoration-none">Catálogos</a></li>
+                                <li class="breadcrumb-item active small" aria-current="page">Lectores</li>
+                            </ol>
+                        </nav>
+                    </div>
+                    
+                    <div class="row g-4">
+                        <div class="col-12 col-xl-4">
+                            <div class="card shadow-sm border bg-body h-100">
+                                <div class="card-body p-4">
+                                    <h6 class="text-uppercase text-primary fw-bold mb-4 d-flex align-items-center" style="font-size: 0.75rem;">
+                                        <i class="bi bi-plus-circle-fill me-2"></i>{{ editModeUsuario ? 'Editar Lector' : 'Nuevo Lector' }}
+                                    </h6>
+                                    <form @submit.prevent="guardarUsuario">
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">DOC. IDENTIDAD / CARNET</label>
+                                            <input type="text" class="form-control" v-model="formUsuario.documento" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">NOMBRE COMPLETO</label>
+                                            <input type="text" class="form-control" v-model="formUsuario.nombre" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">CORREO ELECTRÓNICO</label>
+                                            <input type="email" class="form-control" v-model="formUsuario.email" required>
+                                        </div>
+                                        <div class="mb-4">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">TELÉFONO</label>
+                                            <input type="tel" class="form-control" v-model="formUsuario.telefono" required>
+                                        </div>
+                                        <div class="d-grid gap-2">
+                                            <button type="submit" class="btn btn-primary fw-bold py-2 shadow-sm" :disabled="isSaving">
+                                                <span v-if="isSaving" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                                {{ isSaving ? 'Guardando...' : (editModeUsuario ? 'Actualizar Lector' : 'Guardar Lector') }}
+                                            </button>
+                                            <button type="button" class="btn btn-link text-secondary fw-semibold py-2 text-decoration-none" v-if="editModeUsuario" @click="cancelarEdicionUsuario">Cancelar</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-xl-8">
+                            <div class="card shadow-sm border-0 rounded-4 overflow-hidden bg-body h-100">
+                                <div class="card-header bg-body border-bottom py-3 px-4">
+                                    <div class="row align-items-center g-3">
+                                        <div class="col-md-5">
+                                            <h6 class="mb-0 fw-bold"><i class="bi bi-table me-2 text-primary"></i>Padrón de Lectores</h6>
+                                        </div>
+                                        <div class="col-md-7">
+                                            <div class="input-group">
+                                                <span class="input-group-text bg-body-secondary border-0 text-muted px-3"><i class="bi bi-search"></i></span>
+                                                <input type="text" class="form-control bg-body-secondary border-0 shadow-none ps-0" placeholder="Filtrar por nombre o carnet..." v-model="filtroUsuario">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover align-middle mb-0">
+                                        <thead class="bg-body-tertiary border-bottom text-muted" style="font-size: 0.7rem;">
+                                            <tr>
+                                                <th class="px-4 py-3 text-uppercase">CARNET</th>
+                                                <th class="px-4 py-3 text-uppercase">DATOS DEL LECTOR</th>
+                                                <th class="px-4 py-3 text-center text-uppercase">GESTIÓN</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody style="font-size: 0.85rem;">
+                                            <tr v-for="user in usuariosFiltrados" :key="user.idUsuario">
+                                                <td class="px-4 py-3 font-monospace text-primary fw-bold" style="font-size: 0.8rem;">{{ user.documento }}</td>
+                                                <td class="px-4 py-3">
+                                                    <div class="fw-bold text-body" style="font-size: 0.95rem;">{{ user.nombre }}</div>
+                                                    <div class="small text-muted d-flex align-items-center gap-2">
+                                                        <span><i class="bi bi-envelope-fill"></i> {{ user.email }}</span>
+                                                        <span class="text-opacity-25 text-muted">|</span>
+                                                        <span><i class="bi bi-telephone-fill"></i> {{ user.telefono }}</span>
+                                                    </div>
+                                                </td>
+                                                <td class="px-4 py-3 text-center">
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button class="btn btn-outline-secondary border-0 rounded-2 me-1" @click="editarUsuario(user)" title="Editar">
+                                                            <i class="bi bi-pencil-square fs-6"></i>
+                                                        </button>
+                                                        <button class="btn btn-outline-danger border-0 rounded-2" @click="eliminarUsuario(user.idUsuario)" title="Eliminar">
+                                                            <i class="bi bi-trash fs-6"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="usuariosFiltrados.length === 0">
+                                                <td colspan="3" class="text-center py-5 text-muted">
+                                                    <i class="bi bi-people fs-1 d-block mb-2 opacity-25"></i>
+                                                    No se encontraron registros de lectores.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sección de Libros -->
+                <div v-else-if="currentTab === 'libros'" key="libros">
+                    <div class="d-flex align-items-center justify-content-between mb-4">
+                        <h4 class="mb-0 fw-bold text-primary-emphasis"><i class="bi bi-bookshelf me-2"></i>Control de Libros</h4>
+                        <div class="d-flex gap-2">
+                            <div class="btn-group shadow-sm">
+                                <button class="btn btn-sm" :class="!vistaGaleria ? 'btn-primary' : 'btn-outline-primary'" @click="vistaGaleria = false">
+                                    <i class="bi bi-table"></i>
+                                </button>
+                                <button class="btn btn-sm" :class="vistaGaleria ? 'btn-primary' : 'btn-outline-primary'" @click="vistaGaleria = true">
+                                    <i class="bi bi-grid-3x3-gap"></i>
+                                </button>
+                            </div>
+                            <nav aria-label="breadcrumb" class="d-none d-sm-block">
+                                <ol class="breadcrumb mb-0">
+                                    <li class="breadcrumb-item small"><a href="#" class="text-decoration-none">Catálogos</a></li>
+                                    <li class="breadcrumb-item active small" aria-current="page">Libros</li>
+                                </ol>
+                            </nav>
+                        </div>
+                    </div>
+
+                    <div class="row g-4">
+                        <div class="col-12 col-xl-4">
+                            <div class="card shadow-sm border bg-body">
+                                <div class="card-body p-4">
+                                    <h6 class="text-uppercase text-primary fw-bold mb-4 d-flex align-items-center" style="font-size: 0.75rem;">
+                                        <i class="bi bi-plus-circle-fill me-2"></i>{{ editModeLibro ? 'Editar Libro' : 'Nuevo Libro' }}
+                                    </h6>
+                                    <form @submit.prevent="guardarLibro">
+                                        <!-- Previsualización de Portada -->
+                                        <div class="mb-4 text-center">
+                                            <div class="d-inline-block position-relative">
+                                                <img v-if="formLibro.portada" :src="formLibro.portada" 
+                                                     class="rounded shadow border border-primary border-opacity-25" 
+                                                     style="width: 120px; height: 170px; object-fit: cover; background: var(--bs-body-bg);">
+                                                <div v-else class="bg-body-tertiary rounded d-flex flex-column align-items-center justify-content-center text-muted border border-dashed" 
+                                                     style="width: 120px; height: 170px; border: 2px dashed #dee2e6;">
+                                                    <i class="bi bi-image fs-1 opacity-25"></i>
+                                                    <span class="small mt-1 opacity-50 text-uppercase fw-bold" style="font-size: 0.6rem;">Sin Portada</span>
+                                                </div>
+                                                <button v-if="formLibro.portada" type="button" 
+                                                        class="btn btn-danger btn-sm rounded-circle position-absolute top-0 start-100 translate-middle shadow-sm"
+                                                        @click="formLibro.portada = ''"
+                                                        style="width: 24px; height: 24px; padding: 0;">
+                                                    <i class="bi bi-x small"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">ISBN / CÓDIGO BARRAS</label>
+                                            <div class="input-group">
+                                                <input type="text" class="form-control" 
+                                                       v-model="formLibro.isbn" placeholder="978..." required>
+                                                <button class="btn btn-primary px-3" type="button" @click="buscarLibroISBN" :disabled="!formLibro.isbn || isSearching">
+                                                    <span v-if="isSearching" class="spinner-border spinner-border-sm" role="status"></span>
+                                                    <i v-else class="bi bi-search"></i>
+                                                </button>
+                                            </div>
+                                            <div v-if="isbnError" class="text-danger small mt-1">
+                                                <i class="bi bi-x-circle-fill me-1"></i> {{ isbnError }}
+                                            </div>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">O CARGAR PORTADA MANUALMENTE</label>
+                                            <div class="row g-2">
+                                                <div class="col-8">
+                                                    <input type="text" class="form-control form-control-sm" v-model="formLibro.portada" placeholder="Pegar URL de imagen...">
+                                                </div>
+                                                <div class="col-4">
+                                                    <label class="btn btn-outline-secondary btn-sm w-100 text-truncate">
+                                                        <i class="bi bi-upload"></i> Subir
+                                                        <input type="file" class="d-none" accept="image/*" @change="procesarImagenArchivo">
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">TÍTULO DEL LIBRO</label>
+                                            <input type="text" class="form-control" v-model="formLibro.titulo" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">AUTORÍA</label>
+                                            <select class="form-select" v-model="formLibro.idAutor" required>
+                                                <option value="" disabled>Seleccionar autor...</option>
+                                                <option v-for="autor in autores" :key="autor.idAutor" :value="autor.idAutor">{{ autor.nombre }}</option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">CATEGORÍA</label>
+                                            <select class="form-select" v-model="formLibro.idCategoria">
+                                                <option value="" disabled>Seleccionar categoría...</option>
+                                                <option v-for="cat in categorias" :key="cat.idCategoria" :value="cat.idCategoria">{{ cat.nombre }}</option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">EDITORIAL</label>
+                                            <input type="text" class="form-control" v-model="formLibro.editorial" required>
+                                        </div>
+                                        <div class="mb-4">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">EDICIÓN</label>
+                                            <input type="text" class="form-control" v-model="formLibro.edicion" required>
+                                        </div>
+                                        <div class="d-grid gap-2">
+                                            <button type="submit" class="btn btn-primary fw-bold py-2 shadow-sm" :disabled="autores.length === 0 || isSaving">
+                                                <span v-if="isSaving" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                                {{ isSaving ? 'Guardando...' : (editModeLibro ? 'Actualizar Libro' : 'Guardar Libro') }}
+                                            </button>
+                                            <button type="button" class="btn btn-link text-secondary fw-semibold py-2 text-decoration-none" v-if="editModeLibro" @click="cancelarEdicionLibro">Cancelar</button>
+                                        </div>
+                                    </form>
+                                    <div v-if="autores.length === 0" class="alert alert-warning border-0 bg-warning bg-opacity-10 mt-3 p-2 small">
+                                        <i class="bi bi-exclamation-triangle-fill"></i> Debe registrar al menos un autor primero.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-xl-8">
+                            <div class="card shadow-sm border-0 rounded-4 overflow-hidden bg-body h-100">
+                                <div class="card-header bg-body-tertiary border-bottom py-3 px-4">
+                                    <div class="row align-items-center g-3">
+                                        <div class="col-md-5">
+                                            <h6 class="mb-0 fw-bold"><i class="bi bi-table me-2 text-primary"></i>Catálogo de Libros</h6>
+                                        </div>
+                                        <div class="col-md-7">
+                                            <div class="input-group">
+                                                <span class="input-group-text bg-body-tertiary border text-muted px-3"><i class="bi bi-search"></i></span>
+                                                <input type="text" class="form-control bg-body-tertiary shadow-none ps-0" placeholder="Buscar por título, ISBN o editorial..." v-model="filtroLibro">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Vista de Tabla -->
+                                <div class="table-responsive" v-if="!vistaGaleria">
+                                    <table class="table table-hover align-middle mb-0">
+                                        <thead class="bg-body-tertiary border-bottom text-muted" style="font-size: 0.7rem;">
+                                            <tr>
+                                                <th class="px-4 py-3 text-uppercase">ISBN / TÍTULO</th>
+                                                <th class="px-4 py-3 text-uppercase">AUTORÍA / EDITORIAL</th>
+                                                <th class="px-4 py-3 text-center text-uppercase">GESTIÓN</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody style="font-size: 0.85rem;">
+                                            <tr v-for="libro in librosFiltrados" :key="libro.idLibro">
+                                                <td class="px-4 py-3">
+                                                    <div class="d-flex align-items-center gap-3">
+                                                        <img v-if="libro.portada" :src="libro.portada" class="rounded shadow-sm" style="width: 35px; height: 50px; object-fit: cover;">
+                                                        <div v-else class="bg-body-tertiary rounded d-flex align-items-center justify-content-center text-muted" style="width: 35px; height: 50px;">
+                                                            <i class="bi bi-book small"></i>
+                                                        </div>
+                                                        <div>
+                                                            <div class="fw-bold text-body" style="font-size: 0.95rem;">{{ libro.titulo }}</div>
+                                                            <div class="text-primary font-monospace" style="font-size: 0.75rem;">
+                                                                <span class="badge bg-primary bg-opacity-10 text-primary fw-normal rounded-pill">ISBN: {{ libro.isbn }}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td class="px-4 py-3">
+                                                    <div class="fw-bold text-primary mb-1 d-flex align-items-center gap-1">
+                                                        <i class="bi bi-person-fill"></i> {{ obtenerNombreAutor(libro.idAutor) }}
+                                                    </div>
+                                                    <div class="small text-muted">
+                                                        <span><i class="bi bi-tags-fill"></i> {{ obtenerNombreCategoria(libro.idCategoria) }}</span>
+                                                        <span class="mx-1 opacity-25">·</span>
+                                                        <span><i class="bi bi-building"></i> {{ libro.editorial }}</span>
+                                                        <span class="mx-1 opacity-25">·</span>
+                                                        <span><i class="bi bi-bookmark-fill"></i> {{ libro.edicion }}</span>
+                                                    </div>
+                                                </td>
+                                                <td class="px-4 py-3 text-center">
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button class="btn btn-outline-secondary border-0 rounded-2 me-1" @click="editarLibro(libro)" title="Editar">
+                                                            <i class="bi bi-pencil-square fs-6"></i>
+                                                        </button>
+                                                        <button class="btn btn-outline-danger border-0 rounded-2" @click="eliminarLibro(libro.idLibro)" title="Eliminar">
+                                                            <i class="bi bi-trash fs-6"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="librosFiltrados.length === 0">
+                                                <td colspan="3" class="text-center py-5 text-muted">
+                                                    <i class="bi bi-book fs-1 d-block mb-2 opacity-25"></i>
+                                                    No se encontraron obras registrados.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- Vista de Galería -->
+                                <div class="card-body p-4" v-else>
+                                    <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 g-4">
+                                        <div class="col" v-for="libro in librosFiltrados" :key="libro.idLibro">
+                                            <div class="card h-100 shadow-sm border border-light-subtle">
+                                                <img v-if="libro.portada" :src="libro.portada" class="card-img-top" style="height: 200px; object-fit: contain; background: var(--bs-body-bg);" alt="Portada">
+                                                <div v-else class="card-img-top bg-body-tertiary d-flex align-items-center justify-content-center" style="height: 200px;">
+                                                    <i class="bi bi-book display-4 text-muted opacity-25"></i>
+                                                </div>
+                                                <div class="card-body p-3">
+                                                    <h6 class="card-title fw-bold text-truncate mb-1" :title="libro.titulo">{{ libro.titulo }}</h6>
+                                                    <p class="card-text small text-muted mb-2 text-truncate">{{ obtenerNombreAutor(libro.idAutor) }}</p>
+                                                    <div class="d-flex justify-content-between align-items-center">
+                                                        <span class="badge bg-body-secondary text-body fw-normal border">ISBN: {{ libro.isbn }}</span>
+                                                        <div class="btn-group btn-group-sm">
+                                                            <button class="btn btn-outline-secondary btn-sm py-0" @click="editarLibro(libro)"><i class="bi bi-pencil-square"></i></button>
+                                                            <button class="btn btn-outline-danger btn-sm py-0" @click="eliminarLibro(libro.idLibro)"><i class="bi bi-trash"></i></button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div v-if="librosFiltrados.length === 0" class="text-center py-5 text-muted">
+                                        <i class="bi bi-grid-3x3-gap fs-1 d-block mb-2 opacity-25"></i>
+                                        No hay portadas que mostrar.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Control de Préstamos -->
+                <div v-else-if="currentTab === 'prestamos'" key="prestamos">
+                    <div class="d-flex align-items-center justify-content-between mb-4">
+                        <h4 class="mb-0 fw-bold text-primary-emphasis"><i class="bi bi-calendar-check me-2"></i>Control de Préstamos</h4>
+                    </div>
+
+                    <div class="row g-4">
+                        <!-- Formulario de Préstamos -->
+                        <div class="col-12 col-xl-4">
+                            <div class="card shadow-sm border bg-body h-100">
+                                <div class="card-body p-4">
+                                    <h6 class="text-uppercase text-primary fw-bold mb-4 d-flex align-items-center" style="font-size: 0.75rem;">
+                                        <i class="bi bi-plus-circle-fill me-2"></i>{{ editModePrestamo ? 'Editar Préstamo' : 'Nuevo Registro de Préstamo' }}
+                                    </h6>
+                                    <form @submit.prevent="guardarPrestamo">
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">SELECCIONAR LIBRO</label>
+                                            <select class="form-select" v-model="formPrestamo.idLibro" required>
+                                                <option value="" disabled>Elegir libro...</option>
+                                                <option v-for="libro in libros" :key="libro.idLibro" :value="libro.idLibro">{{ libro.titulo }}</option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">SELECCIONAR LECTOR</label>
+                                            <select class="form-select" v-model="formPrestamo.idUsuario" required>
+                                                <option value="" disabled>Elegir lector...</option>
+                                                <option v-for="user in usuarios" :key="user.idUsuario" :value="user.idUsuario">{{ user.nombre }} ({{ user.documento }})</option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">FECHA DE PRÉSTAMO</label>
+                                            <input type="date" class="form-control" v-model="formPrestamo.fechaPrestamo" required>
+                                        </div>
+                                        <div class="mb-4">
+                                            <label class="form-label small fw-bold text-secondary text-uppercase">FECHA ESTIMADA DEVOLUCIÓN</label>
+                                            <input type="date" class="form-control" v-model="formPrestamo.fechaDevolucion" required>
+                                        </div>
+                                        <div class="d-grid gap-2">
+                                            <button type="submit" class="btn btn-primary fw-bold py-2 shadow-sm" :disabled="libros.length === 0 || isSaving">
+                                                <span v-if="isSaving" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                                {{ isSaving ? 'Guardando...' : (editModePrestamo ? 'Actualizar Registro' : 'Registrar Préstamo') }}
+                                            </button>
+                                            <button type="button" class="btn btn-link text-secondary fw-semibold py-2 text-decoration-none" v-if="editModePrestamo" @click="cancelarEdicionPrestamo">Cancelar</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Lista de Préstamos -->
+                        <div class="col-12 col-xl-8">
+                            <div class="card shadow-sm border bg-body h-100">
+                                <div class="card-header bg-body-tertiary border-bottom py-3 px-4">
+                                    <h6 class="mb-0 fw-bold"><i class="bi bi-list-check me-2 text-primary"></i>Préstamos Recientes</h6>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover align-middle mb-0">
+                                        <thead class="bg-body-tertiary border-bottom text-muted" style="font-size: 0.7rem;">
+                                            <tr>
+                                                <th class="px-4 py-3 text-uppercase">DETALLE DEL PRÉSTAMO</th>
+                                                <th class="px-4 py-3 text-uppercase">PLAZO</th>
+                                                <th class="px-4 py-3 text-center text-uppercase">ESTADO / ACCIONES</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody style="font-size: 0.85rem;">
+                                            <tr v-for="p in prestamos.slice().reverse()" :key="p.idPrestamo">
+                                                <td class="px-4 py-3">
+                                                    <div class="fw-bold">{{ obtenerTituloLibro(p.idLibro) }}</div>
+                                                    <div class="small text-muted"><i class="bi bi-person"></i> {{ obtenerNombreUsuario(p.idUsuario) }}</div>
+                                                </td>
+                                                <td class="px-4 py-3">
+                                                    <div class="small"><span class="text-muted">Inicia:</span> {{ p.fechaPrestamo }}</div>
+                                                    <div class="small"><span class="text-muted">Entrega:</span> {{ p.fechaDevolucion }}</div>
+                                                </td>
+                                                <td class="px-4 py-3 text-center">
+                                                    <span class="badge mb-2 d-block" 
+                                                          :class="p.estado === 'Devuelto' ? 'bg-success' : (esAtrasado(p.fechaDevolucion, p.estado) ? 'bg-danger text-white' : 'bg-warning text-dark')">
+                                                        <i v-if="esAtrasado(p.fechaDevolucion, p.estado)" class="bi bi-exclamation-triangle-fill me-1"></i>
+                                                        {{ esAtrasado(p.fechaDevolucion, p.estado) ? 'Atrasado' : p.estado }}
+                                                    </span>
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button v-if="p.estado === 'Prestado'" class="btn btn-outline-success border" @click="devolverLibro(p.idPrestamo)" title="Marcar como Devuelto">
+                                                            <i class="bi bi-check2-circle"></i>
+                                                        </button>
+                                                        <button class="btn btn-outline-secondary border" @click="editarPrestamo(p)" title="Editar">
+                                                            <i class="bi bi-pencil-square"></i>
+                                                        </button>
+                                                        <button class="btn btn-outline-danger border" @click="eliminarPrestamo(p.idPrestamo)" title="Eliminar">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="prestamos.length === 0">
+                                                <td colspan="3" class="text-center py-5 text-muted">
+                                                    <i class="bi bi-calendar-x fs-1 d-block mb-2 opacity-25"></i>
+                                                    No hay préstamos registrados actualmente.
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sección Catálogo Público (Lectores) -->
+                <div v-else-if="currentTab === 'catalogo'" key="catalogo">
+                    <div class="d-flex align-items-center justify-content-between mb-4">
+                        <div>
+                            <h4 class="mb-0 fw-bold text-primary-emphasis"><i class="bi bi-search me-2"></i>Descubrir Títulos</h4>
+                            <p class="text-muted small mb-0 mt-1">Explora la colección digital y física de la biblioteca.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="row g-4">
+                        <div class="col-12 col-md-4 col-lg-3 mb-4" v-for="libro in libros" :key="libro.idLibro">
+                            <div class="card shadow-sm border-0 h-100 rounded-4 overflow-hidden position-relative hover-shadow bg-body" style="transition: transform 0.2s; cursor: pointer;" onmouseover="this.style.transform='translateY(-5px)'" onmouseout="this.style.transform='translateY(0)'">
+                                <span class="badge bg-primary position-absolute top-0 end-0 m-3 shadow-sm z-1"><i class="bi bi-tags-fill me-1"></i>{{ obtenerNombreCategoria(libro.idCategoria) }}</span>
+                                <div class="bg-light d-flex align-items-center justify-content-center p-4 border-bottom" style="height: 240px;">
+                                    <img :src="libro.portada || 'https://via.placeholder.com/150x200?text=Sin+Portada'" class="img-fluid rounded shadow-sm" style="max-height: 100%; object-fit: cover;" alt="Portada">
+                                </div>
+                                <div class="card-body d-flex flex-column p-4">
+                                    <h6 class="card-title fw-bold mb-1 text-truncate" :title="libro.titulo">{{ libro.titulo }}</h6>
+                                    <p class="card-text small text-muted mb-3 d-flex align-items-center gap-1"><i class="bi bi-person text-secondary"></i> {{ obtenerNombreAutor(libro.idAutor) }}</p>
+                                    
+                                    <div class="mt-auto">
+                                        <button class="btn btn-primary w-100 fw-bold shadow-sm rounded-3 py-2" @click.stop="autoPrestamo(libro.idLibro)">
+                                            <i class="bi bi-plus-circle me-1"></i> Añadir a mi estante
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-if="libros.length === 0" class="col-12 text-center py-5 text-muted">
+                            <i class="bi bi-journal-x fs-1 d-block mb-3 opacity-25"></i>
+                            El catálogo está vacío.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sección Mi Estante (Lectores) -->
+                <div v-else-if="currentTab === 'estante'" key="estante">
+                    <div class="d-flex align-items-center justify-content-between mb-4">
+                        <div>
+                            <h4 class="mb-0 fw-bold text-primary-emphasis"><i class="bi bi-journal-bookmark-fill me-2"></i>Mi Estante</h4>
+                            <p class="text-muted small mb-0 mt-1">Libros que estás leyendo actualmente.</p>
+                        </div>
+                    </div>
+
+                    <div class="row g-4">
+                        <div class="col-12 col-xl-6" v-for="p in misPrestamos" :key="p.idPrestamo">
+                            <div class="card shadow-sm border-0 rounded-4 bg-body border-start border-4 border-primary d-flex flex-row overflow-hidden h-100 position-relative">
+                                <div class="bg-body-secondary p-3 d-flex align-items-center justify-content-center border-end" style="width: 140px; flex-shrink: 0;">
+                                    <i class="bi bi-book text-muted opacity-25" style="font-size: 4rem;"></i>
+                                </div>
+                                <div class="card-body p-4 d-flex flex-column">
+                                    <h5 class="fw-bold mb-1 text-primary-emphasis">{{ obtenerTituloLibro(p.idLibro) }}</h5>
+                                    <div class="small text-muted mb-3 d-flex justify-content-between align-items-center">
+                                        <span><i class="bi bi-calendar-event me-1"></i>Vence: <strong :class="esAtrasado(p.fechaDevolucion, p.estado) ? 'text-danger' : 'text-body'">{{ p.fechaDevolucion }}</strong></span>
+                                        <span class="badge" :class="esAtrasado(p.fechaDevolucion, p.estado) ? 'bg-danger text-white' : 'bg-success bg-opacity-10 text-success border border-success border-opacity-25'">
+                                            {{ esAtrasado(p.fechaDevolucion, p.estado) ? 'Atrasado' : 'Activo' }}
+                                        </span>
+                                    </div>
+                                    <div class="mt-auto bg-body-tertiary rounded-3 p-3 border">
+                                        <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.65rem;"><i class="bi bi-pencil-square me-1"></i>Mis Anotaciones</label>
+                                        <textarea class="form-control form-control-sm bg-body border-0 shadow-none mb-2 focus-ring-primary" rows="2" placeholder="Escribe notas sobre tu lectura aquí..." v-model="p.anotaciones"></textarea>
+                                        <div class="d-flex justify-content-end">
+                                            <button class="btn btn-sm btn-primary fw-bold px-3 rounded-pill shadow-sm" @click="guardarAnotacion(p.idPrestamo, p.anotaciones)">Guardar Nota</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-if="misPrestamos.length === 0" class="col-12 text-center py-5 text-muted">
+                            <i class="bi bi-inbox fs-1 d-block mb-3 opacity-25"></i>
+                            Tu estante está vacío. Explora el catálogo para agregar libros.
+                        </div>
+                    </div>
+                </div>
+                </transition>
+            </div>
+        </main>
+    </div>
+</div>
+
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/alertifyjs@1.13.1/build/alertify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
+
+
+======================================================
+ARCHIVO: main.js
+======================================================
+
+import { createApp, ref, computed, onMounted, watch } from 'https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.esm-browser.js';
+import Dexie from 'https://cdn.jsdelivr.net/npm/dexie@3.2.4/dist/dexie.mjs';
+
+const db = new Dexie('db_usss017224_jonathan_guandique');
+
+db.version(4).stores({
+    categorias: '++idCategoria, nombre, descripcion',
+    autor: '++idAutor, codigo, nombre, pais, telefono',
+    libros: '++idLibro, idAutor, idCategoria, isbn, titulo, editorial, edicion, portada',
+    usuarios: '++idUsuario, documento, nombre, email, telefono',
+    prestamos: '++idPrestamo, idLibro, idUsuario, fechaPrestamo, fechaDevolucion, estado'
+});
+
+const App = {
+    setup() {
+        // --- FIX DE PERSISTENCIA ---
+        // Solicitar al navegador que no borre los datos de IndexedDB por falta de espacio
+        const checkStoragePersistence = async () => {
+            if (navigator.storage && navigator.storage.persist) {
+                const granted = await navigator.storage.persist();
+                console.log(granted ? "Almacenamiento persistente concedido." : "Almacenamiento persistente denegado.");
+            }
+        };
+        checkStoragePersistence();
+        // ---------------------------
+
+        const sidebarVisible = ref(false);
+        const windowWidth = ref(window.innerWidth);
+        const darkMode = ref(localStorage.getItem('theme') === 'dark');
+        
+        // --- SIMULACIÓN DE SESIÓN (eLibro) ---
+        const simuladorLoginId = ref('admin'); // 'admin' o idUsuario
+        const rolActual = computed(() => simuladorLoginId.value === 'admin' ? 'admin' : 'lector');
+        
+        const cambiarSesion = () => {
+            if (rolActual.value === 'lector') {
+                currentTab.value = 'catalogo'; // Kiosco
+            } else {
+                currentTab.value = 'dashboard';
+            }
+        };
+
+        const misPrestamos = computed(() => {
+            if (rolActual.value !== 'lector') return [];
+            return prestamos.value.filter(p => p.idUsuario === simuladorLoginId.value && p.estado === 'Prestado');
+        });
+
+        const autoPrestamo = async (idLibro) => {
+            const libroOcupado = prestamos.value.find(p => p.idLibro === idLibro && p.estado === 'Prestado');
+            if (libroOcupado) {
+                alertify.error('Este libro ya está prestado.');
+                return;
+            }
+            
+            // Setear a 7 dias por defecto de eLibro
+            const hoy = new Date();
+            const fechaPrestamo = hoy.toISOString().split('T')[0];
+            const devolucionDate = new Date();
+            devolucionDate.setDate(hoy.getDate() + 7);
+            const fechaDevolucion = devolucionDate.toISOString().split('T')[0];
+
+            isSaving.value = true;
+            try {
+                await db.prestamos.add({
+                    idLibro: idLibro,
+                    idUsuario: simuladorLoginId.value,
+                    fechaPrestamo: fechaPrestamo,
+                    fechaDevolucion: fechaDevolucion,
+                    estado: 'Prestado'
+                });
+                await cargarPrestamos();
+                currentTab.value = 'estante';
+                alertify.success('Libro añadido a tu estante virtual con éxito.');
+            } catch (error) {
+                alertify.error('Error al realizar auto-préstamo');
+            } finally {
+                setTimeout(() => isSaving.value = false, 500);
+            }
+        };
+        // -------------------------------------
+
+        const applyTheme = () => {
+            document.documentElement.setAttribute('data-bs-theme', darkMode.value ? 'dark' : 'light');
+            localStorage.setItem('theme', darkMode.value ? 'dark' : 'light');
+        };
+        applyTheme();
+
+        const toggleDarkMode = () => {
+            darkMode.value = !darkMode.value;
+            applyTheme();
+        };
+        
+        window.addEventListener('resize', () => {
+            windowWidth.value = window.innerWidth;
+        });
+
+        const currentTab = ref('dashboard');
+
+        // --- LÓGICA DE CATEGORÍAS ---
+        const categorias = ref([]);
+        const editModeCategoria = ref(false);
+        const formCategoria = ref({ idCategoria: null, nombre: '', descripcion: '' });
+
+        const cargarCategorias = async () => {
+            categorias.value = await db.categorias.toArray();
+        };
+
+        const guardarCategoria = async () => {
+            isSaving.value = true;
+            try {
+                const { idCategoria, ...data } = formCategoria.value;
+                if (editModeCategoria.value) {
+                    await db.categorias.update(idCategoria, data);
+                    alertify.success('Categoría actualizada');
+                } else {
+                    await db.categorias.add(data);
+                    alertify.success('Categoría guardada');
+                }
+                await cargarCategorias();
+                cancelarEdicionCategoria();
+            } catch (error) {
+                alertify.error('Error al guardar categoría');
+            } finally {
+                setTimeout(() => isSaving.value = false, 500);
+            }
+        };
+
+        const editarCategoria = (cat) => {
+            formCategoria.value = { ...cat };
+            editModeCategoria.value = true;
+        };
+
+        const eliminarCategoria = async (id) => {
+            alertify.confirm('Eliminar Categoría', '¿Eliminar esta categoría?', 
+                async () => {
+                    await db.categorias.delete(id);
+                    await cargarCategorias();
+                    alertify.success('Eliminada');
+                }, null
+            );
+        };
+
+        const cancelarEdicionCategoria = () => {
+            formCategoria.value = { idCategoria: null, nombre: '', descripcion: '' };
+            editModeCategoria.value = false;
+        };
+
+        // -----------------------------
+
+        const autores = ref([]);
+        const filtroAutor = ref('');
+        const editModeAutor = ref(false);
+        const formAutor = ref({ idAutor: null, codigo: '', nombre: '', pais: '', telefono: '' });
+        const isSaving = ref(false);
+        const isSearching = ref(false);
+        const isbnError = ref('');
+
+        // --- SISTEMA DE ANOTACIONES ESTANTE ---
+        const guardarAnotacion = async (idPrestamo, nota) => {
+            // Guardaremos la nota en el registro de prestamo para simplificar la persistencia
+            await db.prestamos.update(idPrestamo, { anotaciones: nota });
+            await cargarPrestamos();
+            alertify.success('Anotación guardada en tu estante.');
+        };
+        // --------------------------------------
+
+        const cargarAutores = async () => {
+            autores.value = await db.autor.toArray();
+        };
+
+        // Configuración global de Alertify
+        alertify.set('notifier', 'position', 'bottom-right');
+        alertify.defaults.theme.ok = 'btn btn-primary';
+        alertify.defaults.theme.cancel = 'btn btn-danger';
+        alertify.defaults.theme.input = 'form-control';
+
+        const guardarAutor = async () => {
+            isSaving.value = true;
+            try {
+                const { idAutor, ...data } = formAutor.value;
+                if (editModeAutor.value) {
+                    await db.autor.update(idAutor, data);
+                    alertify.success('Autor actualizado con éxito');
+                } else {
+                    await db.autor.add(data);
+                    alertify.success('Autor guardado con éxito');
+                }
+                await cargarAutores();
+                cancelarEdicionAutor();
+            } catch (error) {
+                alertify.error('Error al guardar el autor');
+            } finally {
+                setTimeout(() => {
+                    isSaving.value = false;
+                }, 500);
+            }
+        };
+
+        const editarAutor = (autor) => {
+            formAutor.value = { ...autor };
+            editModeAutor.value = true;
+        };
+
+        const eliminarAutor = async (id) => {
+            alertify.confirm('Confirmar eliminación', '¿Estás seguro de eliminar este autor?', 
+                async () => {
+                    await db.autor.delete(id);
+                    await cargarAutores();
+                    alertify.success('Autor eliminado correctamente');
+                }, 
+                () => {
+                    alertify.error('Operación cancelada');
+                }
+            ).set('labels', {ok:'Si, eliminar', cancel:'Cancelar'});
+        };
+
+        const cancelarEdicionAutor = () => {
+            formAutor.value = { idAutor: null, codigo: '', nombre: '', pais: '', telefono: '' };
+            editModeAutor.value = false;
+        };
+
+        const autoresFiltrados = computed(() => {
+            const qr = filtroAutor.value.toLowerCase().trim();
+            if (!qr) return autores.value;
+            return autores.value.filter(a => 
+                a.nombre.toLowerCase().includes(qr) ||
+                a.codigo.toLowerCase().includes(qr) ||
+                a.pais.toLowerCase().includes(qr)
+            );
+        });
+
+        // --- LÓGICA DE USUARIOS (LECTORES) ---
+        const usuarios = ref([]);
+        const filtroUsuario = ref('');
+        const editModeUsuario = ref(false);
+        const formUsuario = ref({ idUsuario: null, documento: '', nombre: '', email: '', telefono: '' });
+
+        const cargarUsuarios = async () => {
+            usuarios.value = await db.usuarios.toArray();
+        };
+
+        const guardarUsuario = async () => {
+            isSaving.value = true;
+            try {
+                const { idUsuario, ...data } = formUsuario.value;
+                if (editModeUsuario.value) {
+                    await db.usuarios.update(idUsuario, data);
+                    alertify.success('Usuario actualizado');
+                } else {
+                    await db.usuarios.add(data);
+                    alertify.success('Usuario registrado');
+                }
+                await cargarUsuarios();
+                cancelarEdicionUsuario();
+            } catch (error) {
+                alertify.error('Error al guardar el usuario');
+            } finally {
+                setTimeout(() => isSaving.value = false, 500);
+            }
+        };
+
+        const editarUsuario = (user) => {
+            formUsuario.value = { ...user };
+            editModeUsuario.value = true;
+        };
+
+        const eliminarUsuario = async (id) => {
+            alertify.confirm('Eliminar Lector', '¿Eliminar este lector permanentemente?', 
+                async () => {
+                    await db.usuarios.delete(id);
+                    await cargarUsuarios();
+                    alertify.success('Lector eliminado');
+                }, null
+            );
+        };
+
+        const cancelarEdicionUsuario = () => {
+            formUsuario.value = { idUsuario: null, documento: '', nombre: '', email: '', telefono: '' };
+            editModeUsuario.value = false;
+        };
+
+        const usuariosFiltrados = computed(() => {
+            const qr = filtroUsuario.value.toLowerCase().trim();
+            if (!qr) return usuarios.value;
+            return usuarios.value.filter(u => 
+                u.nombre.toLowerCase().includes(qr) ||
+                u.documento.toLowerCase().includes(qr)
+            );
+        });
+
+        // -----------------------------
+
+        const libros = ref([]);
+        const filtroLibro = ref('');
+        const editModeLibro = ref(false);
+        const formLibro = ref({ idLibro: null, idAutor: '', idCategoria: '', isbn: '', titulo: '', editorial: '', edicion: '', portada: '' });
+        const vistaGaleria = ref(false);
+
+        const cargarLibros = async () => {
+            libros.value = await db.libros.toArray();
+        };
+
+        const buscarLibroISBN = async () => {
+            if (!formLibro.value.isbn) return;
+            isSearching.value = true;
+            isbnError.value = '';
+            try {
+                const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${formLibro.value.isbn}`);
+                const data = await response.json();
+                
+                if (data.totalItems > 0) {
+                    const info = data.items[0].volumeInfo;
+                    formLibro.value.titulo = info.title || '';
+                    formLibro.value.editorial = info.publisher || '';
+                    formLibro.value.edicion = info.publishedDate || '';
+                    formLibro.value.portada = info.imageLinks?.thumbnail || '';
+                    alertify.success('Datos y portada recuperados');
+                } else {
+                    isbnError.value = 'No se encontró información para este ISBN';
+                    alertify.warning('Libro no encontrado en la API');
+                }
+            } catch (error) {
+                isbnError.value = 'Error al consultar la API';
+                alertify.error('Error de conexión');
+            } finally {
+                isSearching.value = false;
+            }
+        };
+
+        const procesarImagenArchivo = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (file.size > 2 * 1024 * 1024) { // Límite de 2MB
+                alertify.error('La imagen es demasiado grande (máx 2MB)');
+                event.target.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                formLibro.value.portada = e.target.result;
+                alertify.success('Imagen cargada correctamente');
+            };
+            reader.readAsDataURL(file);
+        };
+
+        const guardarLibro = async () => {
+            isSaving.value = true;
+            try {
+                const data = {
+                    idAutor: parseInt(formLibro.value.idAutor, 10),
+                    idCategoria: parseInt(formLibro.value.idCategoria, 10) || null,
+                    isbn: formLibro.value.isbn,
+                    titulo: formLibro.value.titulo,
+                    editorial: formLibro.value.editorial,
+                    edicion: formLibro.value.edicion,
+                    portada: formLibro.value.portada
+                };
+
+                if (editModeLibro.value) {
+                    await db.libros.update(formLibro.value.idLibro, data);
+                    alertify.success('Libro actualizado correctamente');
+                } else {
+                    await db.libros.add(data);
+                    alertify.success('Libro guardado correctamente');
+                }
+                await cargarLibros();
+                cancelarEdicionLibro();
+            } catch (error) {
+                alertify.error('Error al guardar el libro');
+            } finally {
+                setTimeout(() => {
+                    isSaving.value = false;
+                }, 500);
+            }
+        };
+
+        const editarLibro = (libro) => {
+            formLibro.value = { ...libro };
+            editModeLibro.value = true;
+        };
+
+        const eliminarLibro = async (id) => {
+            alertify.confirm('Confirmar eliminación', '¿Estás seguro de eliminar este libro?',
+                async () => {
+                    await db.libros.delete(id);
+                    await cargarLibros();
+                    alertify.success('Libro eliminado correctamente');
+                },
+                () => {
+                    alertify.error('Operación cancelada');
+                }
+            ).set('labels', {ok:'Si, eliminar', cancel:'Cancelar'});
+        };
+
+        const cancelarEdicionLibro = () => {
+            formLibro.value = { idLibro: null, idAutor: '', idCategoria: '', isbn: '', titulo: '', editorial: '', edicion: '', portada: '' };
+            editModeLibro.value = false;
+            isbnError.value = '';
+        };
+
+        // Lógica de Préstamos
+        const prestamos = ref([]);
+        const editModePrestamo = ref(false);
+        const formPrestamo = ref({ idPrestamo: null, idLibro: '', idUsuario: '', fechaPrestamo: '', fechaDevolucion: '', estado: 'Prestado' });
+
+        const cargarPrestamos = async () => {
+            prestamos.value = await db.prestamos.toArray();
+        };
+
+        const guardarPrestamo = async () => {
+            isSaving.value = true;
+            try {
+                const idLibroParsed = parseInt(formPrestamo.value.idLibro, 10);
+
+                // --- VALIDACIÓN DE DISPONIBILIDAD (STOCK) ---
+                if (!editModePrestamo.value) {
+                    const libroOcupado = prestamos.value.find(p => p.idLibro === idLibroParsed && p.estado === 'Prestado');
+                    if (libroOcupado) {
+                        alertify.error('Error: Este libro ya se encuentra prestado actualmente.');
+                        isSaving.value = false;
+                        return; // Evita que se guarde
+                    }
+                }
+
+                const data = {
+                    idLibro: idLibroParsed,
+                    idUsuario: parseInt(formPrestamo.value.idUsuario, 10),
+                    fechaPrestamo: formPrestamo.value.fechaPrestamo,
+                    fechaDevolucion: formPrestamo.value.fechaDevolucion,
+                    estado: formPrestamo.value.estado
+                };
+
+                if (editModePrestamo.value) {
+                    await db.prestamos.update(formPrestamo.value.idPrestamo, data);
+                    alertify.success('Préstamo actualizado');
+                } else {
+                    await db.prestamos.add(data);
+                    alertify.success('Préstamo registrado');
+                }
+                await cargarPrestamos();
+                cancelarEdicionPrestamo();
+            } catch (error) {
+                alertify.error('Error al guardar préstamo');
+            } finally {
+                setTimeout(() => isSaving.value = false, 500);
+            }
+        };
+
+        const editarPrestamo = (p) => {
+            formPrestamo.value = { ...p };
+            editModePrestamo.value = true;
+        };
+
+        const eliminarPrestamo = async (id) => {
+            alertify.confirm('Eliminar Préstamo', '¿Borrar este registro?', 
+                async () => {
+                    await db.prestamos.delete(id);
+                    await cargarPrestamos();
+                    alertify.success('Eliminado');
+                }, null
+            );
+        };
+
+        const devolverLibro = async (id) => {
+            await db.prestamos.update(id, { estado: 'Devuelto' });
+            await cargarPrestamos();
+            alertify.success('Libro marcado como devuelto');
+        };
+
+        const cancelarEdicionPrestamo = () => {
+            formPrestamo.value = { idPrestamo: null, idLibro: '', idUsuario: '', fechaPrestamo: '', fechaDevolucion: '', estado: 'Prestado' };
+            editModePrestamo.value = false;
+        };
+
+        const obtenerTituloLibro = (idLibro) => {
+            const libro = libros.value.find(l => l.idLibro === idLibro);
+            return libro ? libro.titulo : 'Libro no encontrado';
+        };
+
+        const obtenerNombreUsuario = (idUsuario) => {
+            const user = usuarios.value.find(u => u.idUsuario === idUsuario);
+            return user ? user.nombre : 'Lector Desconocido';
+        };
+
+        // --- MANEJO DE ALERTAS DE VENCIMIENTO ---
+        const esAtrasado = (fechaDevolucion, estado) => {
+            if (estado !== 'Prestado') return false;
+            const hoy = new Date().toISOString().split('T')[0];
+            return fechaDevolucion < hoy;
+        };
+
+        // --- CHART.JS ANALYTICS DASHBOARD ---
+        let myChart = null;
+        
+        const renderChart = () => {
+            if (rolActual.value !== 'admin') return;
+            setTimeout(() => {
+                const ctx = document.getElementById('popularBooksChart');
+                if (!ctx) return;
+                
+                if (myChart) myChart.destroy();
+                
+                const counts = {};
+                prestamos.value.forEach(p => {
+                    counts[p.idLibro] = (counts[p.idLibro] || 0) + 1;
+                });
+                
+                const topBooks = Object.keys(counts)
+                    .sort((a, b) => counts[b] - counts[a])
+                    .slice(0, 5)
+                    .map(id => ({
+                        titulo: obtenerTituloLibro(parseInt(id, 10)),
+                        cantidad: counts[id]
+                    }));
+                
+                if (topBooks.length === 0) return;
+
+                myChart = new window.Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: topBooks.map(b => b.titulo.substring(0, 20) + (b.titulo.length > 20 ? '...' : '')),
+                        datasets: [{
+                            label: 'Veces Prestado',
+                            data: topBooks.map(b => b.cantidad),
+                            backgroundColor: 'rgba(13, 110, 253, 0.7)',
+                            borderColor: 'rgba(13, 110, 253, 1)',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+                    }
+                });
+            }, 300);
+        };
+
+        watch(currentTab, (newVal) => {
+            if (newVal === 'dashboard') {
+                renderChart();
+            }
+        });
+        
+        watch(prestamos, () => {
+            if (currentTab.value === 'dashboard') {
+                renderChart();
+            }
+        }, { deep: true });
+        // -------------------------------------
+
+        const librosFiltrados = computed(() => {
+            const qr = filtroLibro.value.toLowerCase().trim();
+            if (!qr) return libros.value;
+            return libros.value.filter(l => 
+                l.titulo.toLowerCase().includes(qr) ||
+                l.isbn.toLowerCase().includes(qr) ||
+                l.editorial.toLowerCase().includes(qr)
+            );
+        });
+
+        const obtenerNombreAutor = (idAutor) => {
+            const autor = autores.value.find(a => a.idAutor === idAutor);
+            return autor ? autor.nombre : 'Desconocido/Eliminado';
+        };
+
+        const obtenerNombreCategoria = (idCategoria) => {
+            if (!idCategoria) return 'Sin Categoría';
+            const cat = categorias.value.find(c => c.idCategoria === idCategoria);
+            return cat ? cat.nombre : 'Eliminada';
+        };
+
+        onMounted(async () => {
+            try {
+                await cargarUsuarios();
+                await cargarCategorias();
+                await cargarAutores();
+                await cargarLibros();
+                await cargarPrestamos();
+                renderChart();
+            } catch (error) {
+                console.error("Error al cargar la base de datos IndexedDB:", error);
+                alertify.error("Error al cargar registros. IndexedDB podría estar bloqueado en el navegador.", 5);
+            }
+        });
+
+        return {
+            sidebarVisible,
+            windowWidth,
+            darkMode,
+            toggleDarkMode,
+            currentTab,
+            simuladorLoginId,
+            rolActual,
+            cambiarSesion,
+            categorias,
+            editModeCategoria,
+            formCategoria,
+            guardarCategoria,
+            editarCategoria,
+            eliminarCategoria,
+            cancelarEdicionCategoria,
+            autores,
+            filtroAutor,
+            editModeAutor,
+            formAutor,
+            guardarAutor,
+            editarAutor,
+            eliminarAutor,
+            cancelarEdicionAutor,
+            autoresFiltrados,
+            usuarios,
+            filtroUsuario,
+            editModeUsuario,
+            formUsuario,
+            guardarUsuario,
+            editarUsuario,
+            eliminarUsuario,
+            cancelarEdicionUsuario,
+            usuariosFiltrados,
+            libros,
+            filtroLibro,
+            editModeLibro,
+            formLibro,
+            guardarLibro,
+            editarLibro,
+            eliminarLibro,
+            cancelarEdicionLibro,
+            librosFiltrados,
+            obtenerNombreAutor,
+            isSaving,
+            isSearching,
+            buscarLibroISBN,
+            isbnError,
+            vistaGaleria,
+            procesarImagenArchivo,
+            prestamos,
+            formPrestamo,
+            editModePrestamo,
+            guardarPrestamo,
+            editarPrestamo,
+            eliminarPrestamo,
+            devolverLibro,
+            cancelarEdicionPrestamo,
+            obtenerTituloLibro,
+            obtenerNombreUsuario,
+            esAtrasado,
+            obtenerNombreCategoria,
+            guardarAnotacion,
+            misPrestamos,
+            autoPrestamo
+        };
+    }
+};
+
+const app = createApp(App);
+app.mount('#app');
+
+
+======================================================
+ARCHIVO: api/config.php
+======================================================
+
+<?php
+// api/config.php
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type, Authorization");
+
+// Manejo de peticiones preflight CORS
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
+
+$host = 'localhost';
+$db = 'biblioteca_elibro';
+$user = 'root'; // Usuario por defecto de XAMPP
+$pass = '';     // Contraseña por defecto de XAMPP
+
+try {
+    $pdo = new PDO("mysql:host=$host;dbname=$db;charset=utf8mb4", $user, $pass);
+    // Habilitar el reporte de errores de PDO (muy útil para debugging)
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    http_response_code(500);
+    echo json_encode(["error" => "Error crítico: No se pudo conectar a la base de datos."]);
+    exit;
+}
+?>
+
+
+
+======================================================
+ARCHIVO: api/login.php
+======================================================
+
+<?php
+// api/login.php
+require 'config.php';
+
+// Obtener los datos JSON que enviará Vue.js
+$data = json_decode(file_get_contents("php://input"));
+
+if (!isset($data->email) || !isset($data->password)) {
+    http_response_code(400);
+    echo json_encode(["error" => "Por favor, ingresa correo y contraseña."]);
+    exit;
+}
+
+$stmt = $pdo->prepare("SELECT id, nombre, password, rol, perfil_completado FROM usuarios WHERE email = ? LIMIT 1");
+$stmt->execute([$data->email]);
+$user = $stmt->fetch();
+
+// password_verify() compara la clave en texto plano con el HASH guardado en la BD
+if ($user && password_verify($data->password, $user['password'])) {
+    
+    // NUNCA devolvemos la contraseña al front-end
+    unset($user['password']); 
+    
+    // Generar un token simple (En producción se recomienda JWT - JSON Web Tokens)
+    $token = bin2hex(random_bytes(32)); 
+    
+    echo json_encode([
+        "success" => true,
+        "token" => $token,
+        "usuario" => $user
+    ]);
+} else {
+    http_response_code(401);
+    echo json_encode(["success" => false, "error" => "Credenciales incorrectas, intenta nuevamente."]);
+}
+?>
+
+
+
+======================================================
+ARCHIVO: api/categorias.php
+======================================================
+
+<?php
+// api/categorias.php
+require 'config.php';
+header('Content-Type: application/json');
+
+$method = $_SERVER['REQUEST_METHOD'];
+
+switch ($method) {
+    case 'GET':
+        $stmt = $pdo->query("SELECT * FROM categorias ORDER BY nombre ASC");
+        echo json_encode($stmt->fetchAll());
+        break;
+
+    case 'POST':
+        $data = json_decode(file_get_contents("php://input"));
+        $stmt = $pdo->prepare("INSERT INTO categorias (nombre, descripcion) VALUES (?, ?)");
+        $stmt->execute([$data->nombre, $data->descripcion]);
+        echo json_encode(["success" => true, "id" => $pdo->lastInsertId()]);
+        break;
+
+    case 'PUT':
+        $data = json_decode(file_get_contents("php://input"));
+        $stmt = $pdo->prepare("UPDATE categorias SET nombre=?, descripcion=? WHERE id=?");
+        $stmt->execute([$data->nombre, $data->descripcion, $data->id]);
+        echo json_encode(["success" => true]);
+        break;
+
+    case 'DELETE':
+        $id = $_GET['id'];
+        $stmt = $pdo->prepare("DELETE FROM categorias WHERE id=?");
+        $stmt->execute([$id]);
+        echo json_encode(["success" => true]);
+        break;
+}
+?>
+
+
+
+======================================================
+ARCHIVO: api/usuarios.php
+======================================================
+
+<?php
+// api/usuarios.php
+require 'config.php';
+header('Content-Type: application/json');
+
+$method = $_SERVER['REQUEST_METHOD'];
+
+switch ($method) {
+    case 'GET':
+        $stmt = $pdo->query("SELECT id, nombre, email, rol, perfil_completado, fecha_registro FROM usuarios ORDER BY nombre ASC");
+        echo json_encode($stmt->fetchAll());
+        break;
+
+    case 'POST':
+        $data = json_decode(file_get_contents("php://input"));
+        // Simulando que el admin crea al usuario: la contraseña es el DNI o email por defecto
+        $password = password_hash($data->email, PASSWORD_DEFAULT); 
+        $stmt = $pdo->prepare("INSERT INTO usuarios (nombre, email, password, rol) VALUES (?, ?, ?, ?)");
+        $stmt->execute([$data->nombre, $data->email, $password, 'lector']);
+        echo json_encode(["success" => true, "id" => $pdo->lastInsertId()]);
+        break;
+
+    case 'PUT':
+        $data = json_decode(file_get_contents("php://input"));
+        $stmt = $pdo->prepare("UPDATE usuarios SET nombre=?, email=? WHERE id=?");
+        $stmt->execute([$data->nombre, $data->email, $data->id]);
+        echo json_encode(["success" => true]);
+        break;
+
+    case 'DELETE':
+        $id = $_GET['id'];
+        $stmt = $pdo->prepare("DELETE FROM usuarios WHERE id=?");
+        $stmt->execute([$id]);
+        echo json_encode(["success" => true]);
+        break;
+}
+?>
+
+
+
+======================================================
+ARCHIVO: api/libros.php
+======================================================
+
+<?php
+// api/libros.php
+require 'config.php';
+header('Content-Type: application/json');
+
+$method = $_SERVER['REQUEST_METHOD'];
+
+switch ($method) {
+    case 'GET':
+        // Hacemos JOIN con categorias para enviar el nombre directo si es necesario
+        $stmt = $pdo->query("SELECT l.*, c.nombre as categoria_nombre FROM libros l LEFT JOIN categorias c ON l.categoria_id = c.id ORDER BY l.titulo ASC");
+        echo json_encode($stmt->fetchAll());
+        break;
+
+    case 'POST':
+        $data = json_decode(file_get_contents("php://input"));
+        $stmt = $pdo->prepare("INSERT INTO libros (titulo, autor, categoria_id, isbn, stock_total, stock_disponible, portada_url) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$data->titulo, $data->autor, $data->categoria_id, $data->isbn, $data->stock_total, $data->stock_total, $data->portada_url]);
+        echo json_encode(["success" => true, "id" => $pdo->lastInsertId()]);
+        break;
+
+    case 'PUT':
+        $data = json_decode(file_get_contents("php://input"));
+        $stmt = $pdo->prepare("UPDATE libros SET titulo=?, autor=?, categoria_id=?, isbn=?, stock_total=?, portada_url=? WHERE id=?");
+        $stmt->execute([$data->titulo, $data->autor, $data->categoria_id, $data->isbn, $data->stock_total, $data->portada_url, $data->id]);
+        echo json_encode(["success" => true]);
+        break;
+
+    case 'DELETE':
+        $id = $_GET['id'];
+        $stmt = $pdo->prepare("DELETE FROM libros WHERE id=?");
+        try {
+            $stmt->execute([$id]);
+            echo json_encode(["success" => true]);
+        } catch(PDOException $e) {
+            http_response_code(409);
+            echo json_encode(["error" => "No se puede borrar un libro que tiene historial de préstamos."]);
+        }
+        break;
+}
+?>
+
+
+
+======================================================
+ARCHIVO: api/prestamos.php
+======================================================
+
+<?php
+// api/prestamos.php
+require 'config.php';
+header('Content-Type: application/json');
+
+$method = $_SERVER['REQUEST_METHOD'];
+
+switch ($method) {
+    case 'GET':
+        $stmt = $pdo->query("SELECT p.*, l.titulo as libro_titulo, u.nombre as usuario_nombre FROM prestamos p JOIN libros l ON p.libro_id = l.id JOIN usuarios u ON p.usuario_id = u.id ORDER BY p.fecha_registro DESC");
+        echo json_encode($stmt->fetchAll());
+        break;
+
+    case 'POST': // Auto-Préstamo o Préstamo Manual
+        $data = json_decode(file_get_contents("php://input"));
+        
+        try {
+            $pdo->beginTransaction();
+            
+            // 1. Verificar Disponibilidad Real Exclusiva (Evita colisiones)
+            $stmt = $pdo->prepare("SELECT stock_disponible FROM libros WHERE id = ? FOR UPDATE");
+            $stmt->execute([$data->libro_id]);
+            $libro = $stmt->fetch();
+            
+            if (!$libro || $libro['stock_disponible'] <= 0) {
+                http_response_code(400);
+                echo json_encode(["error" => "El libro se encuentra agotado."]);
+                $pdo->rollBack();
+                exit;
+            }
+            
+            // 2. Insertar Préstamo
+            $stmtInsert = $pdo->prepare("INSERT INTO prestamos (usuario_id, libro_id, fecha_inicio, fecha_vencimiento) VALUES (?, ?, ?, ?)");
+            $stmtInsert->execute([$data->usuario_id, $data->libro_id, $data->fecha_inicio, $data->fecha_vencimiento]);
+            $prestamoId = $pdo->lastInsertId();
+            
+            // 3. Descontar Stock
+            $stmtUpdate = $pdo->prepare("UPDATE libros SET stock_disponible = stock_disponible - 1 WHERE id = ?");
+            $stmtUpdate->execute([$data->libro_id]);
+            
+            $pdo->commit();
+            echo json_encode(["success" => true, "id" => $prestamoId]);
+            
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            http_response_code(500);
+            echo json_encode(["error" => "Error procesando el préstamo."]);
+        }
+        break;
+
+    case 'PUT': // Devolución de libro o Guardar Anotación
+        $data = json_decode(file_get_contents("php://input"));
+        
+        if (isset($data->anotaciones)) {
+            // Es una actualización de anotación desde Mi Estante
+            $stmt = $pdo->prepare("UPDATE prestamos SET anotaciones=? WHERE id=?");
+            $stmt->execute([$data->anotaciones, $data->id]);
+            echo json_encode(["success" => true]);
+        } 
+        else if (isset($data->accion) && $data->accion === 'devolver') {
+            // Es una devolución
+            try {
+                $pdo->beginTransaction();
+                
+                // Marcar como devuelto
+                $stmt = $pdo->prepare("UPDATE prestamos SET estado='devuelto' WHERE id=?");
+                $stmt->execute([$data->id]);
+                
+                // Recuperar libro_id para restaurar stock
+                $stmtGet = $pdo->prepare("SELECT libro_id FROM prestamos WHERE id=?");
+                $stmtGet->execute([$data->id]);
+                $prestamo = $stmtGet->fetch();
+                
+                if($prestamo) {
+                    $stmtStock = $pdo->prepare("UPDATE libros SET stock_disponible = stock_disponible + 1 WHERE id=?");
+                    $stmtStock->execute([$prestamo['libro_id']]);
+                }
+                
+                $pdo->commit();
+                echo json_encode(["success" => true]);
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                http_response_code(500);
+                echo json_encode(["error" => "Error en devolución."]);
+            }
+        }
+        break;
+}
+?>
+
+
