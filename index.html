@@ -35,9 +35,18 @@
 </head>
 <body class="bg-body bg-pattern-books">
 
-<div id="app" v-cloak class="shadow-sm min-vh-100 d-flex flex-column">
 
-    <nav v-if="estaAutenticado" class="navbar navbar-dark bg-primary px-3 shadow flex-shrink-0 sticky-top" style="height:60px; z-index: 1030;">
+<div id="app" v-cloak class="shadow-sm min-vh-100 d-flex flex-column bg-body-tertiary">
+    <router-view v-slot="{ Component }">
+        <component :is="Component" />
+    </router-view>
+</div>
+
+
+
+    <template id="tmpl-dashboard-layout">
+        <div class="d-flex flex-column min-vh-100 w-100">
+            <nav class="navbar navbar-dark bg-primary px-3 shadow flex-shrink-0 sticky-top" style="height:60px; z-index: 1030;">
         <div class="container-fluid px-0">
             <div class="navbar-brand d-flex align-items-center gap-2 mb-0" style="padding: 0;">
                 <button class="btn btn-sm btn-link text-white me-1 d-md-none" @click="sidebarVisible = !sidebarVisible">
@@ -69,7 +78,7 @@
         </div>
     </nav>
 
-    <div v-if="estaAutenticado" class="d-flex flex-grow-1" style="background-color: var(--bs-body-bg);">
+    <div class="d-flex flex-grow-1" style="background-color: var(--bs-body-bg);">
 
         <nav class="bg-body-tertiary border-end flex-shrink-0 sidebar overflow-y-auto"
              :style="sidebarVisible || windowWidth >= 768 ? 'width:220px;' : 'width:0;'">
@@ -163,27 +172,18 @@
         <main class="flex-grow-1 p-4 bg-body-tertiary bg-opacity-50" style="min-width:0;">
             <div class="container-xl mx-auto">
                 <router-view v-slot="{ Component }">
-                        <transition name="fade" mode="out-in">
-                            <component :is="Component" />
-                        </transition>
-                    </router-view>
+                    <component :is="Component" />
+                </router-view>
             </div>
         </main>
     </div>
 
-    <!-- Vista para usuarios NO autenticados (Login) -->
-    <div v-if="!estaAutenticado" class="d-flex flex-grow-1 bg-body-tertiary">
-        <router-view v-slot="{ Component }">
-            <transition name="fade" mode="out-in">
-                <component :is="Component" />
-            </transition>
-        </router-view>
-    </div>
-</div>
+    
+        </div>
+    </template>
+    
 
-
-
-    <!-- TEMPLATES DE VUE ROUTER -->
+<!-- TEMPLATES DE VUE ROUTER -->
     <template id="tmpl-login">
         <div class="container d-flex flex-column align-items-center justify-content-center flex-grow-1 w-100" style="min-height: 100vh;">
             <div class="card shadow-lg border-0 rounded-4 p-4" style="max-width: 400px; width: 100%;">

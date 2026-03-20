@@ -88,7 +88,12 @@ const MainView = {
     setup() {
         const router = useRouter();
         const route = useRoute();
-        const currentTab = computed(() => route.params.tab || (route.path.includes('admin') ? 'dashboard' : 'catalogo'));
+        const currentTab = computed(() => {
+            if (route.name && typeof route.name === 'string' && route.name.includes('-')) {
+                return route.name.split('-')[1];
+            }
+            return route.path.split('/').pop() || 'dashboard';
+        });
         const user = JSON.parse(localStorage.getItem('user') || '{}');
         const rolActual = ref(user.rol || 'lector');
         const simuladorLoginId = ref(user.id || 0);
@@ -419,11 +424,94 @@ const MainView = {
 };
 
 // Router y Guards
+// VISTA LAYOUT DEL DASHBOARD (Navbar + Sidebar)
+const DashboardLayout = {
+    template: '#tmpl-dashboard-layout',
+    setup() {
+        const nombreUsuario = ref('');
+        const rolActual = ref('');
+        const darkMode = ref(localStorage.getItem('theme') === 'dark');
+        const router = useRouter();
+        const route = useRoute();
+        const sidebarVisible = ref(false);
+        const windowWidth = ref(window.innerWidth);
+        const currentTab = computed(() => {
+            if (route.name && typeof route.name === 'string' && route.name.includes('-')) {
+                return route.name.split('-')[1];
+            }
+            return route.path.split('/').pop() || '';
+        });
+
+        const checkAuth = () => {
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            if (user.nombre) {
+                nombreUsuario.value = user.nombre;
+                rolActual.value = user.rol;
+            }
+        };
+
+        checkAuth();
+        window.addEventListener('auth-changed', checkAuth);
+
+        const cerrarSesion = () => {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            router.push('/login');
+        };
+
+        const applyTheme = () => {
+            document.documentElement.setAttribute('data-bs-theme', darkMode.value ? 'dark' : 'light');
+            localStorage.setItem('theme', darkMode.value ? 'dark' : 'light');
+        };
+        applyTheme();
+
+        const toggleDarkMode = () => {
+            darkMode.value = !darkMode.value;
+            applyTheme();
+        };
+
+        const irA = (tab) => {
+            if (rolActual.value === 'admin') {
+                router.push(`/admin/${tab}`);
+            } else {
+                router.push(`/inicio/${tab}`);
+            }
+        };
+
+        return {
+            nombreUsuario, rolActual, darkMode, toggleDarkMode,
+            cerrarSesion, currentTab, irA
+        };
+    }
+};
+
 const routes = [
     { path: '/', redirect: '/login' },
     { path: '/login', component: LoginView, name: 'login' },
-    { path: '/admin/:tab?', component: MainView, name: 'admin', meta: { requiresAuth: true, role: 'admin' } },
-    { path: '/inicio/:tab?', component: MainView, name: 'inicio', meta: { requiresAuth: true, role: 'lector' } }
+    {
+        path: '/admin',
+        component: DashboardLayout,
+        meta: { requiresAuth: true, role: 'admin' },
+        children: [
+            { path: '', redirect: '/admin/dashboard' },
+            { path: 'dashboard', component: MainView, name: 'admin-dashboard' },
+            { path: 'categorias', component: MainView, name: 'admin-categorias' },
+            { path: 'usuarios', component: MainView, name: 'admin-usuarios' },
+            { path: 'autores', component: MainView, name: 'admin-autores' },
+            { path: 'libros', component: MainView, name: 'admin-libros' },
+            { path: 'prestamos', component: MainView, name: 'admin-prestamos' }
+        ]
+    },
+    {
+        path: '/inicio',
+        component: DashboardLayout,
+        meta: { requiresAuth: true, role: 'lector' },
+        children: [
+            { path: '', redirect: '/inicio/catalogo' },
+            { path: 'estante', component: MainView, name: 'inicio-estante' },
+            { path: 'catalogo', component: MainView, name: 'inicio-catalogo' }
+        ]
+    }
 ];
 
 const router = createRouter({
@@ -456,60 +544,10 @@ router.beforeEach((to, from, next) => {
 });
 
 // App Root
-const App = {
-    setup() {
-        const estaAutenticado = ref(false);
-        const nombreUsuario = ref('');
-        const rolActual = ref('');
-        const darkMode = ref(localStorage.getItem('theme') === 'dark');
-        const router = useRouter();
-        const route = useRoute();
-        const sidebarVisible = ref(false);
-        const windowWidth = ref(window.innerWidth);
-        const currentTab = computed(() => route.params.tab || '');
+const App = { setup() { return {}; } };
 
-        const checkAuth = () => {
-            const token = localStorage.getItem('token');
-            const user = JSON.parse(localStorage.getItem('user') || '{}');
-            estaAutenticado.value = !!token;
-            if (user.nombre) {
-                nombreUsuario.value = user.nombre;
-                rolActual.value = user.rol;
-            }
-        };
 
-        checkAuth();
-        window.addEventListener('auth-changed', checkAuth);
 
-        const cerrarSesion = () => {
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-            checkAuth();
-            router.push('/login');
-        };
-
-        const applyTheme = () => {
-            document.documentElement.setAttribute('data-bs-theme', darkMode.value ? 'dark' : 'light');
-            localStorage.setItem('theme', darkMode.value ? 'dark' : 'light');
-        };
-        applyTheme();
-
-        const toggleDarkMode = () => {
-            darkMode.value = !darkMode.value;
-            applyTheme();
-        };
-
-        const irA = (tab) => {
-            if (rolActual.value === 'admin') {
-                router.push(`/admin/${tab}`);
-            } else {
-                router.push(`/inicio/${tab}`);
-            }
-        };
-
-        return { estaAutenticado, nombreUsuario, rolActual, darkMode, toggleDarkMode, cerrarSesion, sidebarVisible, windowWidth, currentTab, irA };
-    }
-};
 
 const app = createApp(App);
 app.use(router);
