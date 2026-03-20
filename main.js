@@ -50,17 +50,18 @@ const LoginView = {
                     localStorage.setItem('user', JSON.stringify(userObj));
                     localStorage.setItem('rol', rolAsignado);
                     
+                    // REGLA 3: Redirección Estricta con Vue Router
+                    if (rolAsignado === 'admin') {
+                        await router.push('/admin/dashboard');
+                    } else {
+                        await router.push('/inicio/catalogo');
+                    }
+                    
+                    // Notificar al App component para cambiar el layout de forma segura
                     window.dispatchEvent(new Event('auth-changed'));
                     
                     if (window.alertify) {
                         alertify.success('Conexión establecida. Bienvenido(a).');
-                    }
-
-                    // REGLA 3: Redirección Estricta con Vue Router
-                    if (rolAsignado === 'admin') {
-                        router.push('/admin/dashboard');
-                    } else {
-                        router.push('/inicio/catalogo');
                     }
                 } else {
                     console.warn("Autenticación denegada silenciosamente:", data);
